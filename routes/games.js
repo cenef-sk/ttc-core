@@ -1,13 +1,71 @@
 const express  = require('express');
 const router   = express.Router();
 const Game = require('../database/schemas/Game');
+const Analytics = require('../database/schemas/Analytics');
+const PublishedGame = require('../database/schemas/PublishedGame');
+const Download = require('../database/schemas/Download');
 var ObjectId = require('mongodb').ObjectId;
+const uuid = require('uuid');
 
+router.get('/published/all', function(req, res, next) {
+  PublishedGame
+  .find({})//{publicGame: true}
+  // .find({codeOnly: false})//{publicGame: true}
+  .populate("owner")
+  // .populate("game")
+  .exec(( err, games) => {
+    if (err) {
+      res.status(500).send({
+        success: false,
+        error: err
+      });
+    } else {
+      res.status(200).send({
+        success: true,
+        data: games
+      });
+    }
+  });
+});
+
+router.get('/published', function(req, res, next) {
+  PublishedGame
+  .find({codeOnly: false})//{publicGame: true}
+  .populate("owner")
+  // .populate("game")
+  .exec(( err, games) => {
+    if (err) {
+      res.status(500).send({
+        success: false,
+        error: err
+      });
+    } else {
+      res.status(200).send({
+        success: true,
+        data: games
+      });
+    }
+  });
+});
 // GET ALL Games for the org
+
+
+
 router.get('/', function(req, res, next) {
   if (req.user && req.org) {
     Game
     .find({owner: req.org._id})
+    // Game.aggregate([
+    //   { "$match": { owner: req.org._id } }
+    // //   {
+    // //     $lookup: {
+    // //         from: "PublishedGame", // collection name in db
+    // //         localField: "game",
+    // //         foreignField: "_id",
+    // //         as: "worksnapsTimeEntries"
+    // //     }
+    // // }
+    // ])
     .exec(( err, games) => {
       if (err) {
         res.status(500).send({
@@ -22,21 +80,77 @@ router.get('/', function(req, res, next) {
       }
     });
   } else{
-    Game
-    .find({published: true})
-    .populate("owner")
-    .exec(( err, games) => {
-      if (err) {
-        res.status(500).send({
-          success: false,
-          error: err
-        });
-      } else {
-        res.status(200).send({
-          success: true,
-          data: games
-        });
+    //TODO Unauthorized access
+    res.status(200).send({
+      success: true,
+      data: []
+    });
+  }
+});
+
+router.get('/assets/:assetId', function(req, res, next) {
+  const assetId = req.params.assetId;
+  if (ObjectId.isValid(assetId)) {
+    if (req.user && req.org) {
+      Game
+      .find({owner: req.org._id})
+      .exec(( err, games) => {
+        if (err) {
+          res.status(500).send({
+            success: false,
+            error: err
+          });
+        } else {
+          PublishedGame
+          .find({owner: req.org._id})
+          .exec(( err, games2) => {
+            if (err) {
+              res.status(500).send({
+                success: false,
+                error: err
+              });
+            } else {
+              let gs1 = games.reduce((prev, g) => {
+                if (extractAssetsGame(g).assets.includes(assetId)) {
+                  return(prev.concat({
+                    name: g.name,
+                    _id: g._id
+                  }))
+                } else {
+                  return prev
+                }
+              }, [])
+              let gs2 = games2.reduce((prev, g) => {
+                if (extractAssetsGame(g).assets.includes(assetId)) {
+                  return(prev.concat({
+                    name: g.name,
+                    _id: g._id,
+                    game: g.game,
+
+                  }))
+                } else {
+                  return prev
+                }
+              }, [])
+              res.status(200).send({
+                success: true,
+                data: gs1.concat(gs2)
+              });
+            }
+        })
       }
+      });
+    } else{
+      //TODO Unauthorized access
+      res.status(200).send({
+        success: true,
+        data: []
+      });
+    }
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
     });
   }
 });
@@ -85,6 +199,21 @@ function extractAssetsGame(game) {
           assets = addAssets(assets, toAdd)
         }
       }
+      if (activity.type === "one-correct") {
+        if (activity.content && activity.content.questions) {
+          let pairAssets = activity.content.questions.reduce((prev, cur) => {
+            let res = []
+            if (cur.correct && cur.correct.img) {
+              res = res.concat(cur.correct.img)
+            }
+            if (cur.wrong && cur.wrong.img) {
+              res = res.concat(cur.wrong.img)
+            }
+            return prev.concat(res)
+          }, [])
+          assets = addAssets(assets, pairAssets)
+        }
+      }
       if (activity.type === "memory") {
         if (activity.content && activity.content.pairs) {
           let pairAssets = activity.content.pairs.reduce((prev, cur) => {
@@ -102,14 +231,179 @@ function extractAssetsGame(game) {
       }
     })
   }
-  return Object.assign({}, game.toObject(), {assets: assets})
+  return Object.assign({}, game, {assets: assets})
 }
-router.get('/:gameId/download', function(req, res, next) {
-  gameById(req, res, true);
+
+router.get('/:code/codedownload', function(req, res, next) {
+  const code = req.params.code;
+  PublishedGame
+  .findOne({entryCode: code})
+  .populate("bg.asset")
+  .exec(function(err, game) {
+    if (err) {
+      res.status(500).send({
+        success: false,
+        error: err
+      });
+    } else {
+      if (game) {
+        game = Object.assign({}, game.toObject())
+        game = enhanceById(game)
+
+        var downloadGame = new Download();
+        downloadGame.game = game.game
+        downloadGame.pubGame = game._id
+        downloadGame.downloadId = game.downloadId
+
+        downloadGame.save(function(err) {
+          if (err){
+            res.status(500).send({
+              success: false,
+              error: err,
+            });
+          } else {
+            res.status(200).send({
+              success: true,
+              data: extractAssetsGame(game)
+            });
+          }
+        })
+
+      } else {
+        res.status(404).send({
+          success: false,
+          message: "Game under specific code is not published"
+        });
+      }
+    }
+  });
 })
+
+router.get('/:gameId/download', function(req, res, next) {
+  const id = req.params.gameId;
+  if (ObjectId.isValid(id)) {
+    PublishedGame
+    .findOne({game: id})
+    .populate("bg.asset")
+    .exec(function(err, game) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        if (game) {
+          game = Object.assign({}, game.toObject())
+          game = enhanceById(game)
+
+          var downloadGame = new Download();
+          downloadGame.game = game.game
+          downloadGame.pubGame = game._id
+          downloadGame.downloadId = game.downloadId
+
+          downloadGame.save(function(err) {
+            if (err){
+              res.status(500).send({
+                success: false,
+                error: err,
+              });
+            } else {
+              res.status(200).send({
+                success: true,
+                data: extractAssetsGame(game)
+              });
+            }
+          })
+
+        } else {
+          res.status(404).send({
+            success: false,
+            message: "Game with specific ID is not published"
+          });
+        }
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+})
+
+router.get('/:gameId/downloads', function(req, res, next) {
+  const id = req.params.gameId;
+  if (ObjectId.isValid(id)) {
+    Download
+    .find({game: id})
+    .exec(function(err, downloads) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        res.status(200).send({
+          success: true,
+          data: downloads.length
+        });
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+})
+
+router.get('/:gameId/test', function(req, res, next) {
+  const id = req.params.gameId;
+  if (ObjectId.isValid(id)) {
+    Game
+    // .findOneAndUpdate({game: id}, {$inc : {'downloads' : 1}})
+    // update should be done in analytics
+    .findOne({_id: id})
+    .populate("bg.asset")
+    .exec(function(err, game) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        if (game) {
+          game = Object.assign({}, game.toObject())
+          game = enhanceById(game)
+          game.game = game._id
+          // saveAnalytics(game)
+          res.status(200).send({
+            success: true,
+            data: extractAssetsGame(game)
+          });
+        } else {
+          res.status(404).send({
+            success: false,
+            message: "Game with specific ID is not published"
+          });
+        }
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+})
+
 router.get('/:gameId', function(req, res, next) {
   gameById(req, res, false);
 })
+
+function enhanceById(game) {
+  return Object.assign({}, game, {downloadId: uuid.v1()})
+}
 
 function gameById(req, res, download) {
   const id = req.params.gameId;
@@ -126,6 +420,9 @@ function gameById(req, res, download) {
       } else {
         if (download) {
           // TODO save statistics of download!
+          game = Object.assign({}, game.toObject())
+          game = enhanceById(game)
+          // saveAnalytics(game)
           res.status(200).send({
             success: true,
             data: extractAssetsGame(game)
@@ -146,6 +443,42 @@ function gameById(req, res, download) {
   }
 }
 
+router.get('/:gameId/analytics', function(req, res, next) {
+  const id = req.params.gameId;
+  if (ObjectId.isValid(id)) {
+    Game
+    .findOne({_id: id})
+    .exec(function(err, game) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        Analytics
+        .find({game: id})
+        .exec(function(err, analytics) {
+          if (err) {
+            res.status(500).send({
+              success: false,
+              error: err
+            });
+          } else {
+            res.status(200).send({
+              success: true,
+              data: analytics
+            });
+          }
+        })
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+})
 
 router.post('/', function(req, res, next) {
   var game = new Game();
@@ -182,6 +515,197 @@ router.post('/', function(req, res, next) {
   });
 });
 
+// router.put('/:gameId/unpublish', function(req, res, next) {
+
+// router.post('/:gameId/analytics', function(req, res, next) {
+
+router.post('/:gameId/analytics', function(req, res, next) {
+  const id = req.params.gameId;
+  if (ObjectId.isValid(id)) {
+    Game
+    .findOne({_id: id})
+    .exec(function(err, game) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        var analytics = new Analytics()
+
+        analytics.game = id
+        analytics.pubGame = req.body.pubGame
+        analytics.downloadId = req.body.downloadId
+        analytics.data = req.body.data
+
+        // finished: Boolean,
+        // duration: Number,
+        // activities: [
+        //   name: String,
+        //   finished: Boolean,
+        //   duration: Number,
+        //   data: Schema.Types.Mixed
+        // ],
+        // data: Schema.Types.Mixed
+
+        analytics.save(function(err) {
+          if (err){
+            res.status(500).send({
+              success: false,
+              error: err,
+            });
+          } else {
+            res.status(200).send({
+              success: true,
+              data: analytics
+            });
+          }
+        });
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+})
+
+// router.put('/:gameId/analytics', function(req, res, next) {
+// // TODO remove old versions
+// // version timestamp
+//   const id = req.params.gameId;
+//   if (ObjectId.isValid(id)) {
+//     Game.findById(id, function(err, game) {
+//       if (err) {
+//         res.status(500).send({
+//           success: false,
+//           error: err
+//         });
+//       } else {
+//         var gameObj = game.toObject()
+//         var gameId = gameObj._id
+//         delete gameObj._id
+//         var pubGame = Object.assign(new PublishedGame(), gameObj)
+//         pubGame.game = gameId
+//
+//         pubGame.save(function(err) {
+//           if (err) {
+//             res.status(500).send({
+//               success: false,
+//               error: err
+//             });
+//           } else {
+//             res.status(200).send({
+//               success: true,
+//               message: 'Game has been published',
+//               data: pubGame
+//             });
+//           }
+//         });
+//       }
+//     });
+//   } else {
+//     res.status(400).send({
+//       success: false,
+//       message: "Invalid ID of the requested object"
+//     });
+//   }
+// });
+
+// gameId vs pubgameId - only as reference
+router.put('/:gameId/publish', function(req, res, next) {
+// TODO remove old versions
+// version timestamp
+  const id = req.params.gameId;
+  if (ObjectId.isValid(id)) {
+    Game.findById(id, function(err, game) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        var gameObj = game.toObject()
+        var gameId = gameObj._id
+        delete gameObj._id
+        delete gameObj.updatedAt
+        delete gameObj.createdAt
+        var pubGame = Object.assign(new PublishedGame(), gameObj)
+        pubGame.game = gameId
+        pubGame.published = true
+        if (req.body.codeOnly) {
+          pubGame.codeOnly = true
+        } else {
+          pubGame.codeOnly = false
+        }
+        delete pubGame.updatedAt
+        delete pubGame.createdAt
+
+        PublishedGame.findOneAndRemove({game: id}, function(err) {
+          if (err) {
+            res.status(500).send({
+              success: false,
+              error: err
+            });
+          } else {
+            pubGame.save(function(err) {
+              if (err) {
+                res.status(500).send({
+                  success: false,
+                  error: err
+                });
+              } else {
+                res.status(200).send({
+                  success: true,
+                  message: 'Game has been published',
+                  data: pubGame
+                });
+              }
+            });
+          }
+        });
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+});
+
+router.delete('/:pubGameId/unpublish', function(req, res, next) {
+
+  const id = req.params.pubGameId;
+  if (ObjectId.isValid(id)) {
+    PublishedGame.findOneAndRemove({game: id}, function(err, game) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        if (game) {
+          res.status(200).send({
+            success: true,
+            message: 'Game has been unpublished!'
+          });
+        } else {
+          res.status(404).send({
+            success: false,
+            message: 'No game found!'
+          });
+        }
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+});
 
 router.put('/:gameId', function(req, res, next) {
   const id = req.params.gameId;
@@ -239,16 +763,25 @@ router.put('/:gameId', function(req, res, next) {
 router.delete('/:gameId', function(req, res, next) {
   const id = req.params.gameId;
   if (ObjectId.isValid(id)) {
-    Game.findByIdAndRemove(id, function(err) {
+    PublishedGame.findOneAndRemove({game: id}, function(err, game) {
       if (err) {
         res.status(500).send({
           success: false,
           error: err
         });
       } else {
-        res.status(200).send({
-          success: true,
-          message: 'Game has been removed!'
+        Game.findByIdAndRemove(id, function(err) {
+          if (err) {
+            res.status(500).send({
+              success: false,
+              error: err
+            });
+          } else {
+            res.status(200).send({
+              success: true,
+              message: 'Game has been removed!'
+            });
+          }
         });
       }
     });

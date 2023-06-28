@@ -12,6 +12,57 @@ Prajeme veľa pozitívnych zážitkov zo vzdelávania.
 S pozdravom tím touchtheculture.eu
 `
 
+emailTemplates.reportSubject = "Používateľ nahlásil nevhodný obsah"
+emailTemplates.reportEmail = (gameId, gameName, ownerName, reason, WEB_APP) =>
+`Používateľ v aplikácii Touch The Culture nahlásil nevhodný obsah.
+
+V hre "${gameName}".
+Od organizácie "${ownerName}".
+
+Ako dôvod uvádza:
+
+"${reason}"
+
+Otestujte túto hru na tejto adrese:
+
+${WEB_APP}?game_id=${gameId}&admin=true
+
+V prípade oprávneného nahlásenia zablokujte možnosť verejného publikovania organizácii:
+
+/orgs/:orgId/untrusted?token=for that org valid always
+url1
+
+Neskôr je možné organizáciu odblokovať pomocou tohto linku:
+
+/orgs/:orgId/trusted?token=for that org valid always
+url2
+
+Vďaka za vyriešenie požiadavky.
+
+S pozdravom aplikácia :)
+`
+
+emailTemplates.trustedSubject = "Používateľ chce publikovať obsah verejne"
+emailTemplates.trustedEmail = (ownerId, ownerName, publicGamesCodes) =>
+`Používateľ "${ownerName}" chce publikovať obsah verejne.
+
+Hry publikovane pod kodmi organizacie:
+
+${publicGamesCodes}
+
+Nastavit organizáciu ako dôveryhodnu:
+
+/orgs/:orgId/trusted?token=for that org valid always
+
+Neskôr je možné organizáciu zablokovať pomocou tohto linku:
+
+/orgs/:orgId/untrusted?token=for that org valid always
+
+Vďaka za vyriešenie požiadavky.
+
+S pozdravom aplikácia :)
+`
+
 emailTemplates.forgotSubject = (lng) => {
   if (lng == "SK") {
     return "Zmena hesla curator.touchtheculture.eu"

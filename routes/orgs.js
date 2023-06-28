@@ -138,6 +138,49 @@ router.put('/:orgId', function(req, res, next) {
   }
 });
 
+router.put('/:orgId/trusted', function(req, res, next) {
+  setTrustedOrg(req, res, true)
+})
+router.put('/:orgId/untrusted', function(req, res, next) {
+  setTrustedOrg(req, res, false)
+})
+
+function setTrustedOrg(req, res, trusted) {
+  const id = req.params.orgId;
+  if (ObjectId.isValid(id)) {
+    Organization.findById(id, function(err, org) {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err
+        });
+      } else {
+        org.trusted = trusted
+
+        org.save(function(err) {
+          if (err) {
+            res.status(500).send({
+              success: false,
+              error: err
+            });
+          } else {
+            res.status(200).send({
+              success: true,
+              message: 'Organization has been updated!',
+              data: org
+            });
+          }
+        });
+      }
+    });
+  } else {
+    res.status(400).send({
+      success: false,
+      message: "Invalid ID of the requested object"
+    });
+  }
+};
+
 router.post('/:orgId/join', function(req, res, next) {
   const id = req.params.orgId;
   const userId = req.user._id

@@ -47,9 +47,9 @@ const MediaAssetSchema = new Schema({
     description: {
       type: String
     },
-    authors: [{
+    author: {
       type: String
-    }],
+    },
     creationDate: {
       type: String
     },

@@ -4,17 +4,23 @@ const config = require('../config');
 const ObjectId = require('mongodb').ObjectId;
 
 const User = require('../database/schemas/User');
+const PublishedGame = require('../database/schemas/PublishedGame');
 const Organization = require('../database/schemas/Organization');
 const PRIVACY_FILTER = {password: 0, email: 0}
 
 const jwt = require('jsonwebtoken');
 
 const {sendEmail} = require('../services/userServices');
-const {forgotSubject, forgotEmail} = require('../services/emailTemplates');
+const {forgotSubject, forgotEmail, reportSubject, reportEmail} = require('../services/emailTemplates');
 
 
 function getOrgRole(org, userId) {
-  let member = org.members.find((member) => member.user == userId)
+  let member = org.members.find((member) => {
+    if (member.user && userId) {
+      return member.user.toString() == userId.toString()
+    }
+    return false;
+  })
   if(member && member.role) {
     return member.role
   } else {
@@ -321,6 +327,44 @@ router.post('/', function(req, res, next) {
     }
   });
 
+});
+
+router.post('/report', function(req, res, next) {
+
+  let gameId = req.body.gameId;
+  let reason = req.body.reason;
+  if (ObjectId.isValid(gameId)) {
+    PublishedGame
+    .findOne({game: gameId})
+    .populate("owner")
+    .exec((err, game) => {
+      if (err) {
+        res.status(500).send({
+          success: false,
+          error: err,
+        });
+      } else {
+        if (game) {
+          sendEmail(config.supportCenterEmail, reportSubject,
+          reportEmail(gameId, game.name, game.owner.name, reason, config.WEB_APP), () => {
+            res.status(200).send({
+              success: true,
+            });
+          })
+        } else {
+          res.status(404).send({
+            success: false,
+            message: "No published game under this ID!"
+          });
+        }
+      }
+    });
+  } else {
+    res.status(500).send({
+      success: false,
+      message: "Incorect game ID!"
+    });
+  }
 });
 
 router.post('/forgot', function(req, res, next) {

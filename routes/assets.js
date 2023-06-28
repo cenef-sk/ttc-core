@@ -66,7 +66,7 @@ function getAsset(assetId, res, cb) {
 
 router.get('/:assetId/media/', function(req, res) {
   getAsset(req.params.assetId, res, (asset) => {
-    if (asset.mediaContent) {
+    if (asset && asset.mediaContent) {
       mediaGet(res, asset.mediaContent)
     } else {
       res.status(404).send({
